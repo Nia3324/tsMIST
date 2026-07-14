@@ -24,6 +24,7 @@ class Morph:
         self.X = X  # Shape: [n_samples, n_dimensions, n_timepoints]
         self.y = y
         self.target_class = target_class
+        self.use_dba = use_dba
         
         self.class1_mask = self.y == target_class
         self.class0_mask = self.y != target_class
@@ -102,7 +103,7 @@ class Morph:
         }
     
 
-    def get_AllMorphs(self, granularity:int=100, use_dba: bool = False, keep_original_serie: bool = True) -> np.ndarray:
+    def get_AllMorphs(self, granularity:int=100, keep_original_serie: bool = True) -> np.ndarray:
         morphs = []
 
         for pair, _ in self.borderline_pairs.items(): 
@@ -110,7 +111,7 @@ class Morph:
             target_c1 = self.class1_X[pair[1]]  # Shape: [n_dimensions, n_timepoints]
                 
             # Apply morphing
-            if use_dba:
+            if self.use_dba:
                 morphing = TSmorph(S=source_c0, T=target_c1, granularity=granularity).transform(use_dba=True)
             else:
                 morphing = TSmorph(S=source_c0, T=target_c1, granularity=granularity).transform()
@@ -123,7 +124,7 @@ class Morph:
         return np.array(morphs)
     
 
-    def CalculateMorph(self,  models: Tuple[Models], granularity:int=100, use_dba: bool = False, verbose = False) -> np.ndarray:
+    def CalculateMorph(self,  models: Tuple[Models], granularity:int=100) -> np.ndarray:
         morphs = []
         results = {}
 
@@ -133,7 +134,7 @@ class Morph:
             source_c0_y = self.class0_y[pair[0]]
             target_c1_y = self.class1_y[pair[1]]
 
-            if use_dba:
+            if self.use_dba:
                 m = TSmorph(S=source_c0, T=target_c1, granularity=granularity).transform(use_dba=True)
             else:
                 m = TSmorph(S=source_c0, T=target_c1, granularity=granularity).transform()

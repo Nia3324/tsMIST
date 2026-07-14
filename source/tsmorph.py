@@ -1,8 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-# Assuming these exist in your .utils, otherwise you can comment them out
-# from .utils import plot_gradient_timeseries, nmae
 
 class TSmorph:
     def __init__(self, S: np.array, T: np.array, granularity: int) -> None:
@@ -21,48 +19,40 @@ class TSmorph:
 
     def transform(self, use_dba: bool = False) -> np.array:
         """
-        Perform linear morphing for multivariate time series.
+        Perform linear or path-interpolation morphing for multivariate time series.
 
         Returns:
             np.array: Morphed time series (shape: [n, d, t])
-                      where n = granularity, d = dimensions, t = time_points
+                      where n = granularity steps, d = dimensions, t = time_points
         """
         min_length = min(self.S.shape[1], self.T.shape[1])
         self.S = self.S[:, -min_length:].astype(float)
         self.T = self.T[:, -min_length:].astype(float)
 
         if use_dba:
-            # FIX 2: Apply DBA per dimension. 
-            # _dba expects 1D arrays, so we loop over the dimensions (d).
+            # Apply PATH-INTERPOLATION per dimension.
             n_dims = self.S.shape[0]
             morphed_dims = []
+            
+            # Create alpha weights, excluding exactly 0.0 (S) and 1.0 (T)
+            # self.granularity already includes the +2 from __init__
+            alpha = np.linspace(0, 1, self.granularity)[1:-1]
 
             for dim in range(n_dims):
                 s_1d = self.S[dim, :]
                 t_1d = self.T[dim, :]
                 
-                # Compute centroid and aligned versions for this dimension
-                centroid = self._dba([s_1d, t_1d])
-                S_aligned = self._warp_to_centroid(s_1d, centroid)
-                T_aligned = self._warp_to_centroid(t_1d, centroid)
-
-                # Interpolate between aligned Source and Target
-                # We skip the very first (0.0) and very last (1.0) because 
-                # those are just S and T, unless you want them included in the morph set.
-                # The original code logic suggests we want 'self.granularity' items in total.
-                alpha = np.linspace(0, 1, self.granularity + 2)[1:-1]
+                # _path_interp returns shape: (time, steps)
+                # We transpose it to (steps, time) for stacking
+                dim_steps = self._path_interp(s_1d, t_1d, alpha).T
                 
-                dim_steps = []
-                for i in alpha:
-                    dim_steps.append(i * T_aligned + (1 - i) * S_aligned)
-                
-                # Stack steps for this dimension -> Shape: (granularity, time_points)
-                morphed_dims.append(np.vstack(dim_steps))
+                # Store steps for this dimension
+                morphed_dims.append(dim_steps)
 
-            # Stack dimensions -> Shape: (dimensions, granularity, time_points)
+            # Stack dimensions -> Shape: (dimensions, granularity_steps, time_points)
             data = np.stack(morphed_dims)
             
-            # Swap axes to return format: (granularity, dimensions, time_points)
+            # Swap axes to return format: (granularity_steps, dimensions, time_points)
             return data.swapaxes(0, 1)
 
         else:
@@ -109,8 +99,6 @@ class TSmorph:
             ax.plot(self.S[dim, :], color=start_color, linewidth=3, label='Source Series (S)')
 
             # Plot intermediate morphs
-            # Note: morphed_series shape is (granularity, dim, time)
-            # We iterate 1 to N-1 to skip overwriting S and T if they are at indices 0 and -1
             for i in range(1, self.granularity - 1):
                 if i >= len(morphed_series): break
                 
@@ -132,6 +120,43 @@ class TSmorph:
 
         plt.tight_layout()
         plt.show()
+        return plt
+
+
+    def _path_interp(self, S: np.ndarray, T: np.ndarray, alphas: np.ndarray) -> np.ndarray:
+        """Path-interpolation morph.
+
+        Computes the DTW correspondence between S and T once. For each matched pair
+        (i, j) and morphing weight a, a sample is placed at the interpolated time
+        (1 - a) * i + a * j with the interpolated amplitude (1 - a) * S[i] + a * T[j];
+        the scattered samples are then resampled onto the regular integer grid.
+
+        Returns an array of shape (len(S), len(alphas)) = (time, steps).
+        """
+        path = self._dtw_path(S, T)
+        I = np.array([i for i, _ in path], dtype=float)
+        J = np.array([j for _, j in path], dtype=float)
+        Sv = S[I.astype(int)]
+        Tv = T[J.astype(int)]
+        L = len(S)
+        grid = np.arange(L, dtype=float)
+
+        columns = []
+        for a in alphas:
+            t = (1.0 - a) * I + a * J                 # interpolated time positions
+            v = (1.0 - a) * Sv + a * Tv               # interpolated amplitudes
+            order = np.argsort(t, kind="stable")
+            ts, vs = t[order], v[order]
+            # average samples that land on the same interpolated time
+            ut, inv = np.unique(ts, return_inverse=True)
+            uv = np.zeros(len(ut))
+            cnt = np.zeros(len(ut))
+            np.add.at(uv, inv, vs)
+            np.add.at(cnt, inv, 1.0)
+            uv /= cnt
+            columns.append(np.interp(grid, ut, uv))   # resample onto integer grid
+
+        return np.vstack(columns).T                   # (time, steps)
 
     def _dtw_path(self, a: np.ndarray, b: np.ndarray):
         """Computes the DTW alignment path between sequences a and b."""
@@ -162,7 +187,9 @@ class TSmorph:
         return path
 
     def _dba(self, sequences: list, n_iter: int = 10):
-        """DBA implementation for a list of 1D sequences."""
+        """DBA implementation for a list of 1D sequences.
+        Note: Kept for legacy compatibility. Use _path_interp instead.
+        """
         L = len(sequences[0])
         centroid = np.mean(np.vstack(sequences), axis=0)
 
@@ -181,8 +208,7 @@ class TSmorph:
 
     def _warp_to_centroid(self, seq: np.ndarray, centroid: np.ndarray):
         """Projects `seq` onto the indices of `centroid` using the DTW path.
-
-        Returns an aligned sequence with the same length as `centroid`.
+        Note: Kept for legacy compatibility. Use _path_interp instead.
         """
         L = len(centroid)
         warped = np.zeros(L)
@@ -193,6 +219,5 @@ class TSmorph:
             counts[i] += 1
         mask = counts > 0
         warped[mask] = warped[mask] / counts[mask]
-        # fallback to centroid values where nothing was mapped
         warped[~mask] = centroid[~mask]
         return warped

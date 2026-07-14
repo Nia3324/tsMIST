@@ -24,7 +24,6 @@ from aeon.classification.deep_learning import InceptionTimeClassifier
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 os.environ['TF_keras_verbose'] = '0'
 
-SEED = 42
 def set_seeds(seed=42):
     os.environ['PYTHONHASHSEED'] = str(seed)
     random.seed(seed)
@@ -33,11 +32,12 @@ def set_seeds(seed=42):
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
     os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
 
-set_seeds(SEED)
+def create_lstm(sequence_length: int, n_features: int, n_classes: int, seed: int = 42) -> Sequential:
 
-def create_lstm(sequence_length: int, n_features: int, n_classes: int) -> Sequential:
-    kernel_initializer = initializers.GlorotUniform(seed=SEED)
-    recurrent_initializer = initializers.Orthogonal(seed=SEED)
+    set_seeds(seed)
+
+    kernel_initializer = initializers.GlorotUniform(seed=seed)
+    recurrent_initializer = initializers.Orthogonal(seed=seed)
     bias_initializer = initializers.Zeros() 
 
     if n_classes == 2:
@@ -109,7 +109,7 @@ def compute_catch22_features(X) -> pd.DataFrame:
 
 class Models:
     def __init__(self, model_name : str, 
-                 X_train : np.array, y_train : np.array) -> None:
+                 X_train : np.array, y_train : np.array, seed : int = 42) -> None:
 
         valid_models = ['lstm', 'catch22', 'rocket', 'inception']
         if model_name not in valid_models:
@@ -129,6 +129,8 @@ class Models:
         self.model = None
         self.catch22_train = None
         self.rocket_kernels = None
+
+        self.seed = seed
         return
 
     # LSTM model ==============================================================================
@@ -138,7 +140,7 @@ class Models:
 
         self.encoded_y = self.encoder.fit_transform(self.y_train)
 
-        model = create_lstm(sequence_length, n_features, self.n_classes)
+        model = create_lstm(sequence_length, n_features, self.n_classes, self.seed)
         target = self.encoded_y if self.n_classes > 2 else self.y_train
 
         history = model.fit(
@@ -178,18 +180,18 @@ class Models:
     # Random Forest w/ Catch22 Features =======================================================
     def train_catch22(self) -> None:
         self.catch22_train = compute_catch22_features(self.X_train)
-        self.model = RandomForestClassifier(random_state=SEED)
+        self.model = RandomForestClassifier(random_state=self.seed)
         # Flatten y_train for sklearn
         self.model.fit(self.catch22_train, self.y_train.ravel())
         return
 
     # Rocket w/ Ridge Classifier ==============================================================
     def train_rocket(self, n_kernels=5000) -> None: 
-        self.rocket_kernels = Rocket(num_kernels=n_kernels, random_state=SEED) 
+        self.rocket_kernels = Rocket(num_kernels=n_kernels, random_state=self.seed) 
         self.rocket_kernels.fit(self.X_train) 
 
         X_train_transform = self.rocket_kernels.transform(self.X_train)
-        self.model = RidgeClassifier(random_state=SEED)
+        self.model = RidgeClassifier(random_state=self.seed)
         self.model.fit(X_train_transform, self.y_train.ravel())
         return
 
@@ -208,7 +210,7 @@ class Models:
             n_epochs=n_epochs,
             batch_size=batch_size,
             verbose=0 if not verbose else 1,
-            random_state=SEED
+            random_state=self.seed
         )
         # InceptionTime expects 1D y array
         self.model.fit(X_train_transposed, self.y_train.ravel())
