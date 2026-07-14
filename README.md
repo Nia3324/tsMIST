@@ -49,7 +49,7 @@ You can clone the repo with the command:
 
 
 ```bash
-git clone https://github.com/Nia3324/Morphing
+git clone https://github.com/Nia3324/tsMIST
 ```
 
 ## References
